@@ -40,6 +40,7 @@
     "treeview_id_column": "ID",
     "preview_frame": "Preview",
     "preview_placeholder": "Select a wallpaper from the list for preview",
+    "preview_loading": "Loading preview...",
     "status_searching_local": "Status: Scanning for local wallpapers...",
     "status_no_wallpaper_dir": "Status: Wallpaper Engine directory not found.",
     "status_scanning_error": "Status: Error during scanning: ",

@@ -1,82 +1,65 @@
-# Wallpaper Engine GUI
+# Simple Linux Wallpaper Engine GUI
 
-GUI for managing Wallpaper Engine wallpapers on Linux.
+A modern, universal GUI for [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine).  
+Works on **Debian, Ubuntu, Fedora, Arch**, and compatible with **Steam Native, Flatpak, and Snap**.
 
-## Dependencies
+![Screenshot](https://via.placeholder.com/800x450.png?text=Modern+MacOS-like+Dark+UI)
 
-### System Requirements
+## 1. Prerequisites (The Backend)
 
-**linux-wallpaperengine:**
+This is just a GUI. You **must** install the core backend engine first.
+
+### Arch / Manjaro
 ```bash
-# Arch/Manjaro
 yay -S linux-wallpaperengine
+```
 
-# Ubuntu/Debian/Fedora - build from source:
+### Debian / Ubuntu / Fedora (Build from Source)
+Detailed instructions are [here](https://github.com/Almamu/linux-wallpaperengine#compiling), but essentially:
+```bash
+# Install build tools (Debian/Ubuntu)
+sudo apt install build-essential cmake libx11-dev libxrandr-dev liblz4-dev
+
+# Install build tools (Fedora)
+sudo dnf install cmake gcc-c++ libX11-devel libXrandr-devel lz4-devel
+
+# Clone & Build
 git clone https://github.com/Almamu/linux-wallpaperengine.git
-cd linux-wallpaperengine
-mkdir build && cd build
+cd linux-wallpaperengine && mkdir build && cd build
 cmake ..
 make
 sudo make install
 ```
 
-**Monitor detection (choose one):**
-```bash
-# X11
-sudo pacman -S xorg-xrandr        # Arch
-sudo apt install x11-xserver-utils # Ubuntu/Debian
-sudo dnf install xrandr            # Fedora
+## 2. Installation (The GUI)
 
-# Wayland (wlroots: Sway, River, etc.)
-sudo pacman -S wlr-randr          # Arch
-sudo apt install wlr-randr        # Ubuntu/Debian
-sudo dnf install wlr-randr        # Fedora
-
-# Hyprland - hyprctl is already included
-```
-
-### Python Dependencies
+This one-step script detects your OS (Ubuntu, Fedora, Arch), installs Python dependencies, and sets up the app.
 
 ```bash
-pip install pillow pystray
+git clone https://github.com/Maxnights/simple-linux-wallpaperengine-gui.git
+cd simple-linux-wallpaperengine-gui
+chmod +x install.sh
+./install.sh
 ```
 
-Or via package manager:
-```bash
-# Arch/Manjaro
-sudo pacman -S python-pillow python-pystray
+## 3. Usage
 
-# Ubuntu/Debian
-sudo apt install python3-pil python3-pil.imagetk python3-tk
-pip install pystray
-
-# Fedora
-sudo dnf install python3-pillow python3-pillow-tk python3-tkinter
-pip install pystray
-```
-
-## Usage
+Start the application:
 
 ```bash
-python3 wallpaper_gui.py
+./run_gui.sh
 ```
 
-Or:
-```bash
-chmod +x wallpaper_gui.py
-./wallpaper_gui.py
-```
+### Features
+* **Universal Steam Detection:** Automatically finds wallpapers in Native, Flatpak, and Snap Steam installations.
+* **System Tray:** Minimize to tray; right-click icon to show/exit.
+* **Multi-Monitor:** Select specific screens for different wallpapers.
+* **Audio Control:** Mute, volume slider, and auto-mute when other apps play audio.
 
-## 
+## Troubleshooting
 
-## Features
+**"linux-wallpaperengine not found"**  
+Ensure you completed Step 1. Run `linux-wallpaperengine --help` in a terminal to verify it's installed globally.
 
-- Wallpaper settings (audio, FPS, scaling)
-
-- Local wallpaper browser from Steam Workshop
-
-- Multi-monitor support (X11 and Wayland)
-
-- Multi-language support (6 languages)
-
-  
+**Wallpapers not showing?**  
+Go to the **Library** tab and click **Scan Local Wallpapers**. The app searches standard paths including `~/.local/share/Steam`, `~/.var/app/com.valvesoftware.Steam`, and `~/snap/steam`.

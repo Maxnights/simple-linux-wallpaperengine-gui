@@ -40,6 +40,7 @@
     "treeview_id_column": "ID",
     "preview_frame": "Превью",
     "preview_placeholder": "Выберите обои из списка для превью",
+    "preview_loading": "Загрузка превью...",
     "status_searching_local": "Статус: Поиск локальных обоев...",
     "status_no_wallpaper_dir": "Статус: Директория Wallpaper Engine не найдена.",
     "status_scanning_error": "Статус: Ошибка при сканировании: ",
