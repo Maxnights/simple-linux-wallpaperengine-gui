@@ -18,6 +18,8 @@
     "disable_mouse_checkbox": "Отключить взаимодействие с мышью (--disable-mouse)",
     "disable_parallax_checkbox": "Отключить эффект параллакса (--disable-parallax)",
     "no_fullscreen_pause_checkbox": "Не ставить на паузу в полноэкранном режиме (--no-fullscreen-pause)",
+    "windowed_mode_checkbox": "Оконный режим (Исправление для KDE/GNOME)",
+    "kwin_hint": "Примечание: Если окно обоев будет поверх других окон, вам может понадобиться создать правило KWin для этого окна (Alt+F3 -> Другие действия -> Настройка правил для конкретного окна), чтобы оно всегда было «На заднем плане» (Keep Below).",
     "adv_frame": "Дополнительно",
     "set_property_label": "Свойства (--set-property):",
     "set_property_example": "Пример: name=value name2=value2",

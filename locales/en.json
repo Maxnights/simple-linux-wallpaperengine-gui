@@ -18,6 +18,8 @@
     "disable_mouse_checkbox": "Disable mouse interaction (--disable-mouse)",
     "disable_parallax_checkbox": "Disable parallax effect (--disable-parallax)",
     "no_fullscreen_pause_checkbox": "Do not pause in full-screen (--no-fullscreen-pause)",
+    "windowed_mode_checkbox": "Windowed Mode (Fix for KDE/GNOME)",
+    "kwin_hint": "Note: If the wallpaper window stays on top, you may need to create a KWin rule (Alt+F3 -> More Actions -> Configure Special Window Settings) to force it 'Keep Below'.",
     "adv_frame": "Advanced",
     "set_property_label": "Properties (--set-property):",
     "set_property_example": "Example: name=value name2=value2",

@@ -4,6 +4,7 @@ import glob
 import json
 import subprocess
 import shutil
+import re
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QLineEdit, QCheckBox, QSlider, QComboBox, 
                              QStackedWidget, QListWidget, QListWidgetItem, QSystemTrayIcon, 
@@ -119,7 +120,8 @@ class WallpaperApp(QMainWindow):
         self.apply_config_ui()
         self.setup_tray()
         self.screens = self.detect_screens()
-        self.screen_combo.addItems(self.screens)
+        for s in self.screens:
+            self.screen_combo.addItem(s["name"], s)
         if self.config.get("auto_restore", False):
             QTimer.singleShot(1000, self.restore_last_wallpaper)
         self.update_texts()
@@ -158,6 +160,7 @@ class WallpaperApp(QMainWindow):
         card_main = self.create_card(layout, "main_controls_frame")
         self.wp_id_input = QLineEdit()
         self.screen_combo = QComboBox()
+        self.screen_combo.setEditable(True)
         self.add_form_row(card_main, "wallpaper_id_path_label", self.wp_id_input)
         self.add_form_row(card_main, "screen_label", self.screen_combo)
         h_layout = QHBoxLayout()
@@ -194,10 +197,23 @@ class WallpaperApp(QMainWindow):
         self.combo_scaling.addItems(['default', 'stretch', 'fit', 'fill'])
         self.combo_clamp = QComboBox()
         self.combo_clamp.addItems(['clamp', 'border', 'repeat'])
+        self.chk_windowed_mode = QCheckBox("windowed_mode_checkbox")
         self.input_props = QLineEdit()
+        self.input_custom_args = QLineEdit()
+        self.input_custom_args.setPlaceholderText("--window 0x0x1280x720")
         self.add_form_row(card_adv, "scaling_label", self.combo_scaling)
         self.add_form_row(card_adv, "clamp_label", self.combo_clamp)
+        card_adv.layout().addWidget(self.chk_windowed_mode)
+        
+        self.lbl_kwin_hint = QLabel("kwin_hint")
+        self.lbl_kwin_hint.setWordWrap(True)
+        self.lbl_kwin_hint.setStyleSheet("color: #888; font-size: 11px; margin-left: 24px; margin-bottom: 8px;")
+        self.lbl_kwin_hint.setVisible(False)
+        self.chk_windowed_mode.toggled.connect(self.lbl_kwin_hint.setVisible)
+        card_adv.layout().addWidget(self.lbl_kwin_hint)
+
         self.add_form_row(card_adv, "set_property_label", self.input_props)
+        self.add_form_row(card_adv, "Custom Arguments", self.input_custom_args)
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
         layout.addLayout(btn_layout)
@@ -326,6 +342,8 @@ class WallpaperApp(QMainWindow):
         self.chk_mouse.setText(self._("disable_mouse_checkbox"))
         self.chk_parallax.setText(self._("disable_parallax_checkbox"))
         self.chk_fs_pause.setText(self._("no_fullscreen_pause_checkbox"))
+        self.chk_windowed_mode.setText(self._("windowed_mode_checkbox"))
+        self.lbl_kwin_hint.setText(self._("kwin_hint"))
         self.chk_auto_restore.setText(self._("auto_restore_checkbox"))
         self.chk_stop_exit.setText(self._("stop_on_exit_checkbox"))
 
@@ -477,7 +495,20 @@ class WallpaperApp(QMainWindow):
                 "Please install it first. See README.md for instructions.")
             self.status_bar.showMessage("Error: linux-wallpaperengine not found")
             return
-        cmd = ['linux-wallpaperengine', '--screen-root', self.screen_combo.currentText(), '--bg', self.wp_id_input.text()]
+        
+        cmd = ['linux-wallpaperengine']
+        screen_name = self.screen_combo.currentText()
+        
+        if self.chk_windowed_mode.isChecked():
+            geom = "0x0x1920x1080"
+            found = next((s for s in self.screens if s["name"] == screen_name), None)
+            if found:
+                geom = f"{found['x']}x{found['y']}x{found['w']}x{found['h']}"
+            cmd.extend(['--window', geom])
+        else:
+            cmd.extend(['--screen-root', screen_name])
+            
+        cmd.extend(['--bg', self.wp_id_input.text()])
         if self.chk_silent.isChecked(): cmd.append('--silent')
         elif self.slider_volume.value() != 15: cmd.extend(['--volume', str(self.slider_volume.value())])
         if self.chk_no_automute.isChecked(): cmd.append('--noautomute')
@@ -493,6 +524,9 @@ class WallpaperApp(QMainWindow):
         props = self.input_props.text()
         if props:
              for prop in props.split(): cmd.extend(['--set-property', prop])
+        custom_args = self.input_custom_args.text()
+        if custom_args:
+             for arg in custom_args.split(): cmd.append(arg)
         self.stop_wallpapers()
         try:
             subprocess.Popen(cmd)
@@ -515,13 +549,33 @@ class WallpaperApp(QMainWindow):
         self.screen_combo.setCurrentText(c.get("screen", ""))
         self.chk_silent.setChecked(c.get("silent", False))
         self.slider_volume.setValue(c.get("volume", 15))
+        self.input_custom_args.setText(c.get("custom_args", ""))
+        self.chk_windowed_mode.setChecked(c.get("windowed_mode", False))
         self.run_wallpaper()
 
     def detect_screens(self):
+        screens = []
         try:
             res = subprocess.run(['xrandr', '--query'], capture_output=True, text=True)
-            return [l.split()[0] for l in res.stdout.splitlines() if " connected" in l]
-        except: return ["eDP-1", "HDMI-1"]
+            # Regex to match: Name connected [primary] WxH+X+Y ...
+            # Group 1: Name, Group 2: W, Group 3: H, Group 4: X, Group 5: Y
+            pattern = re.compile(r'^(\S+)\s+connected\s+(?:primary\s+)?(\d+)x(\d+)\+(\d+)\+(\d+)')
+            
+            for line in res.stdout.splitlines():
+                match = pattern.match(line)
+                if match:
+                    name, w, h, x, y = match.groups()
+                    screens.append({
+                        "name": name,
+                        "w": w, "h": h, "x": x, "y": y
+                    })
+        except Exception as e:
+            print(f"Screen detection error: {e}")
+            
+        if not screens:
+            screens = [{"name": "eDP-1", "w": "1920", "h": "1080", "x": "0", "y": "0"}]
+            
+        return screens
 
     def load_config_data(self):
         self.config = {}
@@ -541,7 +595,9 @@ class WallpaperApp(QMainWindow):
             "background_id": self.wp_id_input.text(),
             "screen": self.screen_combo.currentText(),
             "silent": self.chk_silent.isChecked(),
-            "volume": self.slider_volume.value()
+            "volume": self.slider_volume.value(),
+            "custom_args": self.input_custom_args.text(),
+            "windowed_mode": self.chk_windowed_mode.isChecked()
         }
         with open(CONFIG_FILE, 'w') as f: json.dump(self.config, f, indent=4)
 

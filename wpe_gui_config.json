@@ -1,12 +1,14 @@
 {
     "current_language": "en",
     "last_wallpaper": {
-        "background_id": "2848602290",
+        "background_id": "1986515842",
         "screen": "DP-3",
-        "silent": true,
-        "volume": 0
+        "silent": false,
+        "volume": 15,
+        "custom_args": "",
+        "windowed_mode": true
     },
-    "auto_restore": true,
+    "auto_restore": false,
     "stop_on_exit": true,
     "theme": "Dark"
 }
