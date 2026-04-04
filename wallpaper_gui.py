@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QStackedWidget, QListWidget, QListWidgetItem, QSystemTrayIcon,
                              QMenu, QFrame, QSizePolicy, QGraphicsDropShadowEffect,
                              QStyledItemDelegate, QStyle, QStyleOptionSlider, QFileDialog)
-from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QObject, QTimer, QRect, QPropertyAnimation, QEasingCurve, QVariant, QUrl
+from PyQt6.QtCore import Qt, QSize, QThread, pyqtSignal, QObject, QTimer, QRect, QPoint, QPropertyAnimation, QEasingCurve, QVariant, QUrl
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QImage, QAction, QColor, QPainter, QDesktopServices
 from process_manager import WallpaperProcessManager
 
@@ -212,6 +212,113 @@ class LibraryWatcher(QObject):
         if self.observer.is_alive():
             self.observer.stop()
             self.observer.join()
+
+
+class FilterDropdown(QWidget):
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._state = {
+            "contentrating": {"Everyone": True, "Questionable": True, "Mature": True},
+            "type": {},
+            "tags": {},
+        }
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.btn = QPushButton("Filter ▾")
+        self.btn.setFixedHeight(32)
+        self.btn.setObjectName("SecondaryButton")
+        self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn.clicked.connect(self._show_popup)
+        layout.addWidget(self.btn)
+
+    def _show_popup(self):
+        popup = QFrame(self, Qt.WindowType.Popup)
+        popup.setStyleSheet(
+            "QFrame { background-color: #2D2D2D; border: 1px solid #3A3A3A; border-radius: 8px; }"
+            "QLabel#SectionHeader { color: #9A9A9A; font-size: 11px; font-weight: 700; padding-top: 6px; padding-bottom: 2px; }"
+            "QCheckBox { color: #FFFFFF; padding: 2px 0; spacing: 8px; }"
+            "QCheckBox::indicator { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #666; background: #1E1E1E; }"
+            "QCheckBox::indicator:checked { background: #0A84FF; border-color: #0A84FF; }"
+            "QScrollBar:vertical { border: none; background: transparent; width: 6px; }"
+            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.2); border-radius: 3px; min-height: 20px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+        )
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(380)
+        scroll.setMinimumWidth(200)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; } QWidget { background: transparent; }")
+
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(8, 4, 8, 8)
+        vbox.setSpacing(2)
+
+        sections = [
+            ("contentrating", "Content Rating"),
+            ("type", "Type"),
+            ("tags", "Tags"),
+        ]
+        for section_key, section_label in sections:
+            items = self._state.get(section_key, {})
+            if not items:
+                continue
+            hdr = QLabel(section_label)
+            hdr.setObjectName("SectionHeader")
+            vbox.addWidget(hdr)
+            for key in sorted(items.keys()):
+                cb = QCheckBox(key)
+                cb.setChecked(items[key])
+                cb.stateChanged.connect(lambda state, s=section_key, k=key: self._on_check(s, k, bool(state)))
+                vbox.addWidget(cb)
+            vbox.addSpacing(4)
+
+        vbox.addStretch()
+        scroll.setWidget(container)
+
+        outer = QVBoxLayout(popup)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.addWidget(scroll)
+
+        popup.adjustSize()
+        popup.move(self.btn.mapToGlobal(QPoint(0, self.btn.height())))
+        popup.show()
+
+    def _on_check(self, section, key, checked):
+        self._state[section][key] = checked
+        self.changed.emit()
+
+    def update_dynamic(self, types, tags):
+        for t in sorted(types):
+            if t and t not in self._state["type"]:
+                self._state["type"][t] = True
+        for tag in sorted(tags):
+            if tag and tag not in self._state["tags"]:
+                self._state["tags"][tag] = True
+
+    def is_allowed(self, data):
+        rating = data.get("contentrating", "Everyone")
+        wp_type = data.get("type", "")
+        wp_tags = data.get("tags", [])
+
+        if not self._state["contentrating"].get(rating, True):
+            return False
+
+        tf = self._state["type"]
+        if tf and wp_type and not tf.get(wp_type, True):
+            return False
+
+        tagf = self._state["tags"]
+        if tagf and wp_tags:
+            allowed = {k for k, v in tagf.items() if v}
+            if not any(t in allowed for t in wp_tags):
+                return False
+
+        return True
 
 
 class ClickableSlider(QSlider):
@@ -506,18 +613,13 @@ class WallpaperApp(QMainWindow):
         search_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addLayout(search_layout)
 
-        self.rating_checkboxes = {}
-        rating_layout = QHBoxLayout()
-        rating_layout.setContentsMargins(64, 4, 0, 0)
-        rating_layout.setSpacing(16)
-        rating_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        for rating in ["Everyone", "Questionable", "Mature"]:
-            cb = QCheckBox(rating)
-            cb.setChecked(True)
-            cb.stateChanged.connect(lambda _: self.filter_wallpapers(self.search_input.text()))
-            self.rating_checkboxes[rating] = cb
-            rating_layout.addWidget(cb)
-        layout.addLayout(rating_layout)
+        self.filter_dropdown = FilterDropdown()
+        self.filter_dropdown.changed.connect(lambda: self.filter_wallpapers(self.search_input.text()))
+        filter_bar_layout = QHBoxLayout()
+        filter_bar_layout.setContentsMargins(64, 4, 0, 0)
+        filter_bar_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        filter_bar_layout.addWidget(self.filter_dropdown)
+        layout.addLayout(filter_bar_layout)
 
         self.list_wallpapers = QListWidget()
         self.list_wallpapers.setMovement(QListWidget.Movement.Static)
@@ -726,7 +828,9 @@ class WallpaperApp(QMainWindow):
                                 "id": item_id,
                                 "path": w_dir,
                                 "preview": data.get("preview"),
-                                "contentrating": data.get("contentrating", "Everyone")
+                                "contentrating": data.get("contentrating", "Everyone"),
+                                "type": data.get("type", ""),
+                                "tags": data.get("tags", []),
                             })
                             seen.add(item_id)
                     except: pass
@@ -743,7 +847,9 @@ class WallpaperApp(QMainWindow):
                                     "id": item_id,
                                     "path": path,
                                     "preview": data.get("preview"),
-                                    "contentrating": data.get("contentrating", "Everyone")
+                                    "contentrating": data.get("contentrating", "Everyone"),
+                                    "type": data.get("type", ""),
+                                    "tags": data.get("tags", []),
                                 })
                                 seen.add(item_id)
                         except: pass
@@ -797,6 +903,13 @@ class WallpaperApp(QMainWindow):
             self.status_bar.showMessage(f"Added {new_count} new wallpapers.")
         else:
             self.status_bar.showMessage(self._("status_local_wallpapers_found").format(count=self.list_wallpapers.count()))
+        all_types, all_tags = set(), set()
+        for i in range(self.list_wallpapers.count()):
+            d = self.list_wallpapers.item(i).data(Qt.ItemDataRole.UserRole)
+            if d:
+                if d.get("type"): all_types.add(d["type"])
+                all_tags.update(d.get("tags", []))
+        self.filter_dropdown.update_dynamic(all_types, all_tags)
         self.filter_wallpapers(self.search_input.text())
 
     def on_wallpaper_selected(self, item):
@@ -812,17 +925,13 @@ class WallpaperApp(QMainWindow):
         else:
             self.watcher.timer.start()
 
-        allowed_ratings = {r for r, cb in self.rating_checkboxes.items() if cb.isChecked()}
-
         for i in range(self.list_wallpapers.count()):
             item = self.list_wallpapers.item(i)
             data = item.data(Qt.ItemDataRole.UserRole)
             title = item.text().lower()
             wp_id = str(data.get("id", "")).lower()
-            rating = data.get("contentrating", "Everyone")
-            text_hidden = query and query not in title and query not in wp_id
-            rating_hidden = rating not in allowed_ratings
-            item.setHidden(text_hidden or rating_hidden)
+            text_hidden = bool(query) and query not in title and query not in wp_id
+            item.setHidden(text_hidden or not self.filter_dropdown.is_allowed(data))
     
     def on_sort_change(self):
         try:
