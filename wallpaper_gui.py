@@ -797,6 +797,7 @@ class WallpaperApp(QMainWindow):
             self.status_bar.showMessage(f"Added {new_count} new wallpapers.")
         else:
             self.status_bar.showMessage(self._("status_local_wallpapers_found").format(count=self.list_wallpapers.count()))
+        self.filter_wallpapers(self.search_input.text())
 
     def on_wallpaper_selected(self, item):
         data = item.data(Qt.ItemDataRole.UserRole)
