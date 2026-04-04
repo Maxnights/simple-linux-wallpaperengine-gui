@@ -506,6 +506,19 @@ class WallpaperApp(QMainWindow):
         search_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.addLayout(search_layout)
 
+        self.rating_checkboxes = {}
+        rating_layout = QHBoxLayout()
+        rating_layout.setContentsMargins(64, 4, 0, 0)
+        rating_layout.setSpacing(16)
+        rating_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        for rating in ["Everyone", "Questionable", "Mature"]:
+            cb = QCheckBox(rating)
+            cb.setChecked(True)
+            cb.stateChanged.connect(lambda _: self.filter_wallpapers(self.search_input.text()))
+            self.rating_checkboxes[rating] = cb
+            rating_layout.addWidget(cb)
+        layout.addLayout(rating_layout)
+
         self.list_wallpapers = QListWidget()
         self.list_wallpapers.setMovement(QListWidget.Movement.Static)
         self.list_wallpapers.setObjectName("WallpaperGrid")
@@ -712,7 +725,8 @@ class WallpaperApp(QMainWindow):
                                 "title": data.get("title", "Untitled"),
                                 "id": item_id,
                                 "path": w_dir,
-                                "preview": data.get("preview")
+                                "preview": data.get("preview"),
+                                "contentrating": data.get("contentrating", "Everyone")
                             })
                             seen.add(item_id)
                     except: pass
@@ -728,7 +742,8 @@ class WallpaperApp(QMainWindow):
                                     "title": data.get("title", "Untitled"),
                                     "id": item_id,
                                     "path": path,
-                                    "preview": data.get("preview")
+                                    "preview": data.get("preview"),
+                                    "contentrating": data.get("contentrating", "Everyone")
                                 })
                                 seen.add(item_id)
                         except: pass
@@ -796,12 +811,17 @@ class WallpaperApp(QMainWindow):
         else:
             self.watcher.timer.start()
 
+        allowed_ratings = {r for r, cb in self.rating_checkboxes.items() if cb.isChecked()}
+
         for i in range(self.list_wallpapers.count()):
             item = self.list_wallpapers.item(i)
             data = item.data(Qt.ItemDataRole.UserRole)
             title = item.text().lower()
             wp_id = str(data.get("id", "")).lower()
-            item.setHidden(query not in title and query not in wp_id)
+            rating = data.get("contentrating", "Everyone")
+            text_hidden = query and query not in title and query not in wp_id
+            rating_hidden = rating not in allowed_ratings
+            item.setHidden(text_hidden or rating_hidden)
     
     def on_sort_change(self):
         try:
