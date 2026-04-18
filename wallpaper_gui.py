@@ -48,7 +48,7 @@ QPushButton#DangerButton { background-color: #FF453A; }
 QPushButton#DangerButton:hover { background-color: #D0342C; }
 QCheckBox { spacing: 8px; color: #FFFFFF; }
 QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #666666; background: #2D2D2D; }
-QCheckBox::indicator:checked { background: #0A84FF; border-color: #0A84FF; }
+QCheckBox::indicator:checked { background: #0A84FF; border-color: #0A84FF; image: url(CHECKMARK_PATH); }
 QSlider::groove:horizontal { border: 1px solid #3A3A3A; height: 5px; background: #3f7fcf; margin: 2px 0; border-radius: 2px; }
 QSlider::handle:horizontal { background: #FFFFFF; border: 1px solid #5c5c5c; width: 18px; height: 18px; margin: -8px 0; border-radius: 9px; }
 QListWidget#WallpaperGrid { background-color: transparent; border: none; outline: none; padding: 0px 0px 0px 0px; }
@@ -256,6 +256,9 @@ class WallpaperApp(QMainWindow):
         QTimer.singleShot(500, self.restore_last_wallpaper)
 
         self.wallpaper_proc_manager = WallpaperProcessManager()
+        # Per-screen process managers and wallpaper assignments (for multi-screen support)
+        self.screen_proc_managers = {}   # screen_name -> WallpaperProcessManager
+        self.screen_assignments = {}     # screen_name -> background_id
         self.wallpaper_watchdog = QTimer()
         self.wallpaper_watchdog.setInterval(1000)
         self.wallpaper_watchdog.timeout.connect(self.check_wallpaper_process)
@@ -324,6 +327,9 @@ class WallpaperApp(QMainWindow):
         self.screen_combo.setEditable(True)
         self.add_form_row(card_main, "wallpaper_id_path_label", self.wp_id_input)
         self.add_form_row(card_main, "screen_label", self.screen_combo)
+        self.chk_keep_others = QCheckBox("keep_others_checkbox")
+        self.chk_keep_others.setChecked(True)
+        card_main.layout().addWidget(self.chk_keep_others)
         h_layout = QHBoxLayout()
         h_layout.setSpacing(20)
         layout.addLayout(h_layout)
@@ -458,15 +464,15 @@ class WallpaperApp(QMainWindow):
         layout.setContentsMargins(12, 24, 0, 0)
         layout.setSpacing(0)
         push_buttons_layout = QHBoxLayout()
-        push_buttons_layout.setContentsMargins(165, 0, 0, 0)
-        push_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        push_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        push_buttons_layout.setSpacing(25)
+        push_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         header = QHBoxLayout()
         self.btn_scan = QPushButton("scan_local_wallpapers_button")
         self.btn_scan.clicked.connect(self.start_scan)
         self.btn_scan.setFixedSize(160, 200)
         self.btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
         push_buttons_layout.addWidget(self.btn_scan)
-        push_buttons_layout.addSpacing(25)
         self.btn_set_library = QPushButton("set_wallpaper_button")
         self.btn_set_library.clicked.connect(self.run_wallpaper)
         self.btn_set_library.setFixedSize(160, 200)
@@ -477,8 +483,13 @@ class WallpaperApp(QMainWindow):
         self.btn_select_folder.clicked.connect(self.manual_scan)
         self.btn_select_folder.setFixedSize(160, 200)
         self.btn_select_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        push_buttons_layout.addSpacing(25)
         push_buttons_layout.addWidget(self.btn_select_folder)
+        self.btn_stop_library = QPushButton("remove_wallpaper_button")
+        self.btn_stop_library.setObjectName("DangerButton")
+        self.btn_stop_library.clicked.connect(self.stop_screen_wallpaper)
+        self.btn_stop_library.setFixedSize(160, 200)
+        self.btn_stop_library.setCursor(Qt.CursorShape.PointingHandCursor)
+        push_buttons_layout.addWidget(self.btn_stop_library)
         layout.addLayout(push_buttons_layout)
         layout.addLayout(header)
         
@@ -550,7 +561,9 @@ class WallpaperApp(QMainWindow):
         card.layout().addLayout(h)
 
     def apply_theme(self):
-        self.setStyleSheet(MACOS_DARK)
+        import pathlib
+        checkmark = pathlib.Path(__file__).parent / "checkmark.svg"
+        self.setStyleSheet(MACOS_DARK.replace("CHECKMARK_PATH", str(checkmark)))
 
     def update_texts(self):
         items = ["control_tab", "local_library_tab"]
@@ -569,6 +582,7 @@ class WallpaperApp(QMainWindow):
         self.btn_set.setText(self._("set_wallpaper_button"))
         self.btn_set_library.setText(self._("set_wallpaper_button"))
         self.btn_stop.setText(self._("stop_button"))
+        self.btn_stop_library.setText(self._("remove_wallpaper_button"))
         self.btn_show_log.setText(self._("show_log_button"))
         self.btn_scan.setText(self._("scan_local_wallpapers_button"))
         self.btn_select_folder.setText(self._("select_folder_button"))
@@ -579,6 +593,7 @@ class WallpaperApp(QMainWindow):
         self.chk_parallax.setText(self._("disable_parallax_checkbox"))
         self.chk_fs_pause.setText(self._("no_fullscreen_pause_checkbox"))
         self.chk_windowed_mode.setText(self._("windowed_mode_checkbox"))
+        self.chk_keep_others.setText(self._("keep_others_checkbox"))
         self.lbl_kwin_hint.setText(self._("kwin_hint"))
         self.btn_load_props.setText(self._("load_properties_button"))
         self.btn_apply_prop.setText(self._("apply_property_button"))
@@ -1113,14 +1128,36 @@ class WallpaperApp(QMainWindow):
         custom_args = self.input_custom_args.text()
         if custom_args:
              for arg in custom_args.split(): cmd.append(arg)
-        self.stop_wallpapers()
-        try:
-            self.wallpaper_proc_manager.start(cmd)
-            self.status_bar.showMessage(self._("status_command_launched"))
-            self.save_config()
-        except Exception as e:
-            logging.error("Couldn't run with error %s", e)
-            self.status_bar.showMessage(f"Error: {e}")
+
+        if self.chk_keep_others.isChecked():
+            # Stop only the process running on the selected screen, leave others alone.
+            old_mgr = self.screen_proc_managers.get(screen_name)
+            if old_mgr and old_mgr.is_running():
+                try:
+                    old_mgr.stop(timeout=1)
+                except Exception as e:
+                    logging.error("Couldn't stop per-screen process for %s: %s", screen_name, e)
+            try:
+                mgr = WallpaperProcessManager()
+                mgr.start(cmd)
+                self.screen_proc_managers[screen_name] = mgr
+                self.screen_assignments[screen_name] = self.wp_id_input.text()
+                self.status_bar.showMessage(self._("status_command_launched"))
+                self.save_config()
+            except Exception as e:
+                logging.error("Couldn't run with error %s", e)
+                self.status_bar.showMessage(f"Error: {e}")
+        else:
+            # Legacy path: kill everything, then start fresh on the selected screen.
+            self.stop_wallpapers()
+            self.screen_assignments = {screen_name: self.wp_id_input.text()}
+            try:
+                self.wallpaper_proc_manager.start(cmd)
+                self.status_bar.showMessage(self._("status_command_launched"))
+                self.save_config()
+            except Exception as e:
+                logging.error("Couldn't run with error %s", e)
+                self.status_bar.showMessage(f"Error: {e}")
 
     def show_log_file(self):
         log_path = self.wallpaper_proc_manager.log_path()
@@ -1131,9 +1168,22 @@ class WallpaperApp(QMainWindow):
 
     def stop_wallpapers(self):
         stopped_internal = False
+
+        # Stop all per-screen managers (multi-screen mode).
+        for screen_name, mgr in list(self.screen_proc_managers.items()):
+            if mgr.is_running():
+                try:
+                    mgr.stop(timeout=1)
+                    stopped_internal = True
+                except Exception as e:
+                    logging.error("Couldn't stop per-screen process for %s: %s", screen_name, e)
+        self.screen_proc_managers.clear()
+        self.screen_assignments.clear()
+
+        # Also stop the legacy single process manager.
         if self.wallpaper_proc_manager.is_running():
             try:
-                stopped_internal = self.wallpaper_proc_manager.stop(timeout=1)
+                stopped_internal = self.wallpaper_proc_manager.stop(timeout=1) or stopped_internal
             except Exception as e:
                 logging.error("Couldn't stop internal wallpaper process: %s", e)
 
@@ -1146,26 +1196,63 @@ class WallpaperApp(QMainWindow):
         else:
             self.status_bar.showMessage(self._("status_all_stopped"))
 
+    def stop_screen_wallpaper(self):
+        """Stop the wallpaper only for the currently selected screen, leaving others untouched."""
+        screen_name = self.screen_combo.currentText()
+        mgr = self.screen_proc_managers.pop(screen_name, None)
+        if mgr and mgr.is_running():
+            try:
+                mgr.stop(timeout=1)
+            except Exception as e:
+                logging.error("Couldn't stop wallpaper on %s: %s", screen_name, e)
+        self.screen_assignments.pop(screen_name, None)
+        # Also stop the legacy single manager in case it was the one running for this screen.
+        if self.wallpaper_proc_manager.is_running():
+            try:
+                self.wallpaper_proc_manager.stop(timeout=1)
+            except Exception as e:
+                logging.error("Couldn't stop legacy wallpaper: %s", e)
+        self.status_bar.showMessage(self._("status_all_stopped"))
+        self.save_config()
+
     def check_wallpaper_process(self):
         result = self.wallpaper_proc_manager.check()
-        if result is None:
-            return
-        if result["expected"]:
-            return
-        returncode = result["returncode"]
-        if returncode == 0:
-            msg = "Wallpaper process exited."
-        else:
-            msg = f"Wallpaper process crashed (code {returncode})."
-        if result["log_path"]:
-            msg = f"{msg} Log: {result['log_path']}"
-        self.status_bar.showMessage(msg)
-        if hasattr(self, "tray") and self.tray.isVisible():
-            self.tray.showMessage("Wallpaper Engine", msg)
+        if result is not None and not result["expected"]:
+            returncode = result["returncode"]
+            msg = "Wallpaper process exited." if returncode == 0 else f"Wallpaper process crashed (code {returncode})."
+            if result["log_path"]:
+                msg = f"{msg} Log: {result['log_path']}"
+            self.status_bar.showMessage(msg)
+            if hasattr(self, "tray") and self.tray.isVisible():
+                self.tray.showMessage("Wallpaper Engine", msg)
+
+        # Check per-screen managers.
+        for screen_name in list(self.screen_proc_managers.keys()):
+            mgr = self.screen_proc_managers.get(screen_name)
+            if mgr is None:
+                continue
+            result = mgr.check()
+            if result is None:
+                continue
+            if result["expected"]:
+                self.screen_proc_managers.pop(screen_name, None)
+                self.screen_assignments.pop(screen_name, None)
+                continue
+            returncode = result["returncode"]
+            msg = f"Wallpaper on {screen_name} exited." if returncode == 0 else f"Wallpaper on {screen_name} crashed (code {returncode})."
+            if result["log_path"]:
+                msg = f"{msg} Log: {result['log_path']}"
+            self.status_bar.showMessage(msg)
+            if hasattr(self, "tray") and self.tray.isVisible():
+                self.tray.showMessage("Wallpaper Engine", msg)
+            self.screen_proc_managers.pop(screen_name, None)
+            self.screen_assignments.pop(screen_name, None)
 
     def restore_last_wallpaper(self):
         c = self.config.get("last_wallpaper", {})
         if not c: return
+        keep_others = c.get("keep_others", True)
+        self.chk_keep_others.setChecked(keep_others)
         self.wp_id_input.setText(c.get("background_id", ""))
         self.screen_combo.setCurrentText(c.get("screen", ""))
         self.chk_silent.setChecked(c.get("silent", False))
@@ -1178,12 +1265,65 @@ class WallpaperApp(QMainWindow):
         self.chk_fs_pause.setChecked(c.get("no-fullscreen-pause", False))
         self.input_custom_args.setText(c.get("custom_args", ""))
         self.chk_windowed_mode.setChecked(c.get("windowed_mode", False))
+        # Kill any orphaned processes from a previous crash before starting new ones.
+        self.kill_external_wallpapers()
         self.run_wallpaper()
+        # Restore wallpapers on other screens saved from the previous session.
+        if keep_others:
+            saved_assignments = self.config.get("screen_assignments", {})
+            primary_screen = c.get("screen", "")
+            for screen_name, bg_id in saved_assignments.items():
+                if screen_name == primary_screen:
+                    continue
+                if not bg_id:
+                    continue
+                self._launch_screen(screen_name, bg_id)
         # Library Settings
         self.sorting_type.setCurrentText(self.config.get("sorting_type", "name"))
         self.sort_reversed_state = self.config.get("reversed", False)
         self.btn_reverse_sorted.setText("↑") if self.sort_reversed_state == False else self.btn_reverse_sorted.setText("↓")
         self.watcher.library_changed.emit()
+
+    def _launch_screen(self, screen_name, bg_id):
+        """Start linux-wallpaperengine on a specific screen with the given wallpaper ID,
+        using current audio/perf settings. Does not affect other running screens."""
+        if not bg_id:
+            return
+        old_mgr = self.screen_proc_managers.get(screen_name)
+        if old_mgr and old_mgr.is_running():
+            try:
+                old_mgr.stop(timeout=1)
+            except Exception as e:
+                logging.error("Couldn't stop per-screen process for %s: %s", screen_name, e)
+        cmd = ['linux-wallpaperengine']
+        if self.chk_windowed_mode.isChecked():
+            geom = "0x0x1920x1080"
+            found = next((s for s in self.screens if s["name"] == screen_name), None)
+            if found:
+                geom = f"{found['x']}x{found['y']}x{found['w']}x{found['h']}"
+            cmd.extend(['--window', geom])
+        else:
+            cmd.extend(['--screen-root', screen_name])
+        cmd.extend(['--bg', bg_id])
+        if self.chk_silent.isChecked(): cmd.append('--silent')
+        elif self.slider_volume.value() != 15: cmd.extend(['--volume', str(self.slider_volume.value())])
+        if self.chk_no_automute.isChecked(): cmd.append('--noautomute')
+        if self.chk_no_proc.isChecked(): cmd.append('--no-audio-processing')
+        if self.slider_fps.value() != 30: cmd.extend(['--fps', str(self.slider_fps.value())])
+        if self.chk_mouse.isChecked(): cmd.append('--disable-mouse')
+        if self.chk_parallax.isChecked(): cmd.append('--disable-parallax')
+        if self.chk_fs_pause.isChecked(): cmd.append('--no-fullscreen-pause')
+        scale = self.combo_scaling.currentText()
+        if scale != 'default': cmd.extend(['--scaling', scale])
+        clamp = self.combo_clamp.currentText()
+        if clamp != 'clamp': cmd.extend(['--clamp', clamp])
+        try:
+            mgr = WallpaperProcessManager()
+            mgr.start(cmd)
+            self.screen_proc_managers[screen_name] = mgr
+            self.screen_assignments[screen_name] = bg_id
+        except Exception as e:
+            logging.error("Couldn't launch wallpaper on %s: %s", screen_name, e)
 
     def detect_screens(self):
         screens = []
@@ -1258,7 +1398,10 @@ class WallpaperApp(QMainWindow):
             "no-fullscreen-pause": self.chk_fs_pause.isChecked(),
             "custom_args": self.input_custom_args.text(),
             "windowed_mode": self.chk_windowed_mode.isChecked(),
+            "keep_others": self.chk_keep_others.isChecked(),
         }
+        # Persist per-screen assignments so they can be restored on next launch.
+        self.config["screen_assignments"] = dict(self.screen_assignments)
         wallpaper_id = self.wp_id_input.text().strip()
         if wallpaper_id:
             props_out = {}
