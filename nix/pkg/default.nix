@@ -36,7 +36,7 @@ pkgs.stdenv.mkDerivation rec {
 
   meta = {
     description = "Simple Linux Wallpaper Engine GUI";
-    homepage = "https://github.com/Maxnights/simple-linux-wallpaperengine-gui";
+    homepage = "https://github.com/syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR";
     license = lib.licenses.gpl3;
     platforms = ["x86_64-linux"];
     mainProgram = "simple-wallpaper-engine";

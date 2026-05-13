@@ -2,8 +2,22 @@
 
 A modern, universal GUI for [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine).
 
-I encountered various problems on GNOME and KDE. I recommend using Linux Wallpaper Engine on tiling window managers such as i3, hyprland, and bspwm. </font> For KDE, I recommend trying this [plugin](https://github.com/catsout/wallpaper-engine-kde-plugin#build-and-install)
+**This fork’s repository:** [syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR](https://github.com/syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR)
 
+I encountered various problems on GNOME and KDE. I recommend using Linux Wallpaper Engine on tiling window managers such as i3, hyprland, and bspwm. For KDE, I recommend trying this [plugin](https://github.com/catsout/wallpaper-engine-kde-plugin#build-and-install)
+
+## About this fork
+
+This repo is **forked from** [Maxnights/simple-linux-wallpaperengine-gui](https://github.com/Maxnights/simple-linux-wallpaperengine-gui) with a few changes added on top:
+
+- **Multi-monitor support** — enable outputs in a table, **per-output wallpaper ID**, and **per-output scaling** (default, stretch, fit, fill) and **clamp / border modes** (clamp, border, repeat), passed through to the backend as documented for `linux-wallpaperengine`.
+- **Wallpaper settings** section (**UNSTABLE**) — load `--list-properties` from the engine and edit values in a form instead of raw JSON where possible; save and apply per wallpaper ID.
+- **FPS slider** — shows the current FPS value next to the slider so you are not guessing.
+- **Library shortcut** — **Set wallpaper (all screens)** applies the selected library wallpaper ID to every **enabled** monitor row and applies.
+
+**Testing:** I have **only tested this on KDE Plasma 6**. It might work on other desktops or display setups; I hope it does, but I have not verified them.
+
+**Support:** I am **not offering support** for this project — I mostly made it for myself. Someone else might still find it useful; use it at your own risk.
 
 ## Screenshots
 <img width="2560" height="1440" alt="Pasted image" src="https://github.com/user-attachments/assets/15c6dc78-f51b-4c1b-aeb1-f2bad88bc898" />
@@ -13,11 +27,17 @@ I encountered various problems on GNOME and KDE. I recommend using Linux Wallpap
 
 ## Installation (Arch Linux / Manjaro)
 
-The easiest way is to install via AUR. This will automatically install the backend (`linux-wallpaperengine`) and all dependencies.
+This fork ships a PKGBUILD under [`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) (`pkgname`: **`simple-linux-wallpaperengine-gui-multi-monitor-git`**). It clones from [syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR](https://github.com/syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR).
+
+After you publish that PKGBUILD to the AUR (or install it locally with `makepkg`), helpers such as:
 
 ```bash
-yay -S simple-linux-wallpaperengine-gui-git
+yay -S simple-linux-wallpaperengine-gui-multi-monitor-git
 ```
+
+will pull the backend (`linux-wallpaperengine`) via `depends` like the original package.
+
+The original upstream package name was `simple-linux-wallpaperengine-gui-git` ([Maxnights](https://github.com/Maxnights/simple-linux-wallpaperengine-gui)); this fork uses a different name so it can coexist in packaging until you replace it deliberately.
 
 ## Installation (Nix)
 
@@ -27,7 +47,7 @@ Add to your flake inputs,
 ```nix
 inputs = {
   simple-wallpaper-engine = {
-    url = "github:Maxnights/simple-linux-wallpaperengine-gui";
+    url = "github:syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR";
     inputs = {
       nixpkgs.follows = "nixpkgs";
       home-manager.follows = "home-manager";
@@ -51,7 +71,7 @@ Then in your home manager config, import the home manager module and enable the 
 Imperative Install
 
 ```bash
-nix profile install github:Maxnights/simple-linux-wallpaperengine-gui
+nix profile install github:syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR
 ```
 
 
@@ -85,8 +105,8 @@ sudo make install
 This one-step script installs Python dependencies, and sets up the app.
 
 ```bash
-git clone https://github.com/Maxnights/simple-linux-wallpaperengine-gui.git
-cd simple-linux-wallpaperengine-gui
+git clone https://github.com/syskeyxi/simple-linux-wallpaperengine-gui-MULTI-MONITOR.git
+cd simple-linux-wallpaperengine-gui-MULTI-MONITOR
 chmod +x install.sh
 ./install.sh
 ```
