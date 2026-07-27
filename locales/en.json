@@ -73,7 +73,7 @@
     "preview_not_specified": "Preview not specified\nin project.json.",
     "preview_file_not_found": "Preview file\nnot found.",
     "preview_loading_error": "Error loading\npreview: {error}",
-    "status_selected_wallpaper_id": "Status: Wallpaper ID {id} selected. Click 'Set' on Control tab.",
+    "status_selected_wallpaper_id": "Status: Wallpaper ID {id} selected. Use Set on Target or Apply All Monitors.",
     "untitled": "Untitled",
     "language_label": "Language:",
     "status_config_saved": "Status: Configuration saved.",
