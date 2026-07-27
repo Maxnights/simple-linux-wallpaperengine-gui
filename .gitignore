@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 wpe_gui_config.json
 result*
+
+.venv/
+__pycache__/
+*.pyc
