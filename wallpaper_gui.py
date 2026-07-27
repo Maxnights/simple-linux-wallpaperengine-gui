@@ -546,11 +546,6 @@ class WallpaperApp(QMainWindow):
         self._style_library_toolbar_button(self.btn_set_library, primary=True)
         toolbar.addWidget(self.btn_set_library)
 
-        self.btn_apply_all_library = QPushButton("apply_all_monitors_button")
-        self.btn_apply_all_library.clicked.connect(self.apply_all_monitors_from_library)
-        self._style_library_toolbar_button(self.btn_apply_all_library, secondary=True)
-        toolbar.addWidget(self.btn_apply_all_library)
-
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
@@ -640,8 +635,6 @@ class WallpaperApp(QMainWindow):
         self.combo_lang.blockSignals(False)
         self.btn_set.setText(self._("apply_all_monitors_button"))
         self.btn_set_library.setText(self._("set_on_target_button"))
-        if hasattr(self, "btn_apply_all_library"):
-            self.btn_apply_all_library.setText(self._("apply_all_monitors_button"))
         if hasattr(self, "lbl_library_target"):
             self.lbl_library_target.setText(self._("primary_target_label"))
         self.btn_stop.setText(self._("stop_button"))
@@ -1113,35 +1106,6 @@ class WallpaperApp(QMainWindow):
             self.status_bar.showMessage(self._("status_error_screen_not_selected"))
             return
         self.assign_selected_to_monitor(screen, apply=True)
-
-    def apply_all_monitors_from_library(self, *_args):
-        """Library 'Apply All Monitors': launch wallpapers for every assigned (or all) screens.
-
-        If per-monitor assignments already exist, apply those.
-        Otherwise assign the currently selected wallpaper to every detected
-        monitor and apply — so the Library button does useful work without a
-        prior trip to the Control tab.
-        """
-        self._sync_library_selection_to_id()
-        active = [
-            (name, info) for name, info in self.monitor_assignments.items()
-            if info and info.get("id")
-        ]
-        if not active:
-            selection = self.get_current_wallpaper_selection()
-            if not selection:
-                self.status_bar.showMessage(self._("status_error_empty_id"))
-                return
-            if not self.screens:
-                self.rebuild_monitor_panel()
-            if not self.screens:
-                self.status_bar.showMessage(self._("status_error_screen_not_selected"))
-                return
-            for s in self.screens:
-                self.monitor_assignments[s["name"]] = selection
-            self.refresh_monitor_row_labels()
-            self.save_config()
-        self.run_wallpaper()
 
     def filter_wallpapers(self, text):
         query = text.lower()
