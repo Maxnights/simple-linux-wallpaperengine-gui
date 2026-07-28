@@ -235,8 +235,13 @@ class WallpaperApp(QMainWindow):
         self.load_config_data()
         self.i18n.load(self.config.get("current_language", "en"))
         self._ = self.i18n.get
-        self.setWindowTitle(f"{self._('app_title')} [build: props-ui-1]")
-        self.setFixedSize(900, 900)
+        self.setWindowTitle(f"{self._('app_title')} [build: multi-monitor-1]")
+        self.setMinimumSize(920, 960)
+        self.resize(920, 980)
+        # screen_name -> {"id": str, "title": str}
+        self.monitor_assignments = {}
+        self.monitor_row_widgets = {}
+        self.selected_wallpaper_meta = None  # {"id", "title", "path", ...}
         self.setup_ui()
         self.apply_theme()
         self.apply_config_ui()
@@ -244,9 +249,7 @@ class WallpaperApp(QMainWindow):
         self.start_scan()
         self.stack.setCurrentIndex(1)
         self.nav_bar.setCurrentRow(1)
-        self.screens = self.detect_screens()
-        for s in self.screens:
-            self.screen_combo.addItem(s["name"], s)
+        self.rebuild_monitor_panel()
         self.update_texts()
 
         # Setup file watcher for auto-refresh
@@ -315,15 +318,53 @@ class WallpaperApp(QMainWindow):
 
     def setup_control_page(self):
         layout = QVBoxLayout(self.page_control)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(20)
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(16)
         card_main = self.create_card(layout, "main_controls_frame")
         self.wp_id_input = QLineEdit()
+        self.wp_id_input.setPlaceholderText("Select a wallpaper in Library, or paste an ID/path")
         self.wp_id_input.textChanged.connect(self.on_wallpaper_id_changed)
-        self.screen_combo = QComboBox()
-        self.screen_combo.setEditable(True)
+        self.lbl_selected_title = QLabel("")
+        self.lbl_selected_title.setStyleSheet("color: #A5A5A5; font-size: 12px;")
+        self.lbl_selected_title.setWordWrap(True)
         self.add_form_row(card_main, "wallpaper_id_path_label", self.wp_id_input)
-        self.add_form_row(card_main, "screen_label", self.screen_combo)
+        card_main.layout().addWidget(self.lbl_selected_title)
+
+        # Multi-monitor assignment panel (replaces free-text screen field)
+        card_monitors = self.create_card(layout, "monitors_frame")
+        self.monitor_hint = QLabel()
+        self.monitor_hint.setWordWrap(True)
+        self.monitor_hint.setStyleSheet("color: #A5A5A5; font-size: 12px;")
+        card_monitors.layout().addWidget(self.monitor_hint)
+
+        self.monitor_rows_host = QWidget()
+        self.monitor_rows_layout = QVBoxLayout(self.monitor_rows_host)
+        self.monitor_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.monitor_rows_layout.setSpacing(8)
+        card_monitors.layout().addWidget(self.monitor_rows_host)
+
+        mon_btn_row = QHBoxLayout()
+        self.btn_refresh_screens = QPushButton("refresh_screens_button")
+        self.btn_refresh_screens.setObjectName("SecondaryButton")
+        self.btn_refresh_screens.clicked.connect(self.rebuild_monitor_panel)
+        self.btn_assign_all = QPushButton("assign_all_monitors_button")
+        self.btn_assign_all.setObjectName("SecondaryButton")
+        self.btn_assign_all.clicked.connect(self.assign_selected_to_all_monitors)
+        self.btn_clear_all = QPushButton("clear_all_monitors_button")
+        self.btn_clear_all.setObjectName("SecondaryButton")
+        self.btn_clear_all.clicked.connect(self.clear_all_monitor_assignments)
+        mon_btn_row.addWidget(self.btn_refresh_screens)
+        mon_btn_row.addWidget(self.btn_assign_all)
+        mon_btn_row.addWidget(self.btn_clear_all)
+        mon_btn_row.addStretch()
+        card_monitors.layout().addLayout(mon_btn_row)
+
+        # Primary target for library "Set on Target" / windowed mode (synced with Library tab combo)
+        self.screen_combo = QComboBox()
+        self.screen_combo.setEditable(False)
+        self.screen_combo.currentIndexChanged.connect(self._on_primary_target_changed)
+        self.add_form_row(card_monitors, "primary_target_label", self.screen_combo)
+
         h_layout = QHBoxLayout()
         h_layout.setSpacing(20)
         layout.addLayout(h_layout)
@@ -453,35 +494,61 @@ class WallpaperApp(QMainWindow):
         btn_layout.addWidget(self.btn_stop)
         layout.addStretch()
 
+    def _style_library_toolbar_button(self, button, *, primary=False, secondary=False):
+        """Normal-height toolbar buttons (replaces the old 160x200 tiles)."""
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setMinimumHeight(34)
+        button.setMaximumHeight(36)
+        button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        if primary:
+            button.setObjectName("PrimaryButton")
+        if secondary:
+            button.setObjectName("SecondaryButton")
+
     def setup_library_page(self):
         layout = QVBoxLayout(self.page_library)
-        layout.setContentsMargins(12, 24, 0, 0)
-        layout.setSpacing(0)
-        push_buttons_layout = QHBoxLayout()
-        push_buttons_layout.setContentsMargins(165, 0, 0, 0)
-        push_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        header = QHBoxLayout()
+        layout.setContentsMargins(32, 20, 32, 12)
+        layout.setSpacing(12)
+
+        # Single horizontal toolbar: actions + target dropdown inline
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(10)
+        toolbar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         self.btn_scan = QPushButton("scan_local_wallpapers_button")
         self.btn_scan.clicked.connect(self.start_scan)
-        self.btn_scan.setFixedSize(160, 200)
-        self.btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
-        push_buttons_layout.addWidget(self.btn_scan)
-        push_buttons_layout.addSpacing(25)
-        self.btn_set_library = QPushButton("set_wallpaper_button")
-        self.btn_set_library.clicked.connect(self.run_wallpaper)
-        self.btn_set_library.setFixedSize(160, 200)
-        self.btn_set_library.setObjectName("PrimaryButton")
-        self.btn_set_library.setCursor(Qt.CursorShape.PointingHandCursor)
-        push_buttons_layout.addWidget(self.btn_set_library)
+        self._style_library_toolbar_button(self.btn_scan)
+        toolbar.addWidget(self.btn_scan)
+
         self.btn_select_folder = QPushButton("select_folder_button")
         self.btn_select_folder.clicked.connect(self.manual_scan)
-        self.btn_select_folder.setFixedSize(160, 200)
-        self.btn_select_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        push_buttons_layout.addSpacing(25)
-        push_buttons_layout.addWidget(self.btn_select_folder)
-        layout.addLayout(push_buttons_layout)
-        layout.addLayout(header)
-        
+        self._style_library_toolbar_button(self.btn_select_folder, secondary=True)
+        toolbar.addWidget(self.btn_select_folder)
+
+        toolbar.addSpacing(12)
+
+        self.lbl_library_target = QLabel(self._("primary_target_label"))
+        self.lbl_library_target.setStyleSheet("color: #A5A5A5; font-size: 12px;")
+        toolbar.addWidget(self.lbl_library_target)
+
+        self.library_screen_combo = QComboBox()
+        self.library_screen_combo.setEditable(False)
+        self.library_screen_combo.setMinimumWidth(120)
+        self.library_screen_combo.setMaximumWidth(180)
+        self.library_screen_combo.setMinimumHeight(34)
+        self.library_screen_combo.setMaximumHeight(36)
+        self.library_screen_combo.currentIndexChanged.connect(self._on_library_target_changed)
+        toolbar.addWidget(self.library_screen_combo)
+
+        self.btn_set_library = QPushButton("set_on_target_button")
+        self.btn_set_library.clicked.connect(self.assign_selected_to_primary_and_apply)
+        self._style_library_toolbar_button(self.btn_set_library, primary=True)
+        toolbar.addWidget(self.btn_set_library)
+
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self._("search_placeholder"))
         self.search_input.textChanged.connect(self.filter_wallpapers)
@@ -493,14 +560,14 @@ class WallpaperApp(QMainWindow):
         self.sort_reversed_state = False
         self.sorting_type.currentTextChanged.connect(self.on_sort_change)
         self.btn_reverse_sorted = QPushButton("↑")
-        self.btn_reverse_sorted.setFixedSize(50, 50)
-        self.btn_reverse_sorted.setStyleSheet("background-color: None; font-size: 22px;")
+        self.btn_reverse_sorted.setFixedSize(36, 34)
+        self.btn_reverse_sorted.setStyleSheet("background-color: None; font-size: 18px;")
         self.btn_reverse_sorted.clicked.connect(self.reverse_sorted)
         search_layout = QHBoxLayout()
-        search_layout.setSpacing(0)
-        search_layout.setContentsMargins(64,10,0,0)
+        search_layout.setSpacing(8)
+        search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.addWidget(self.search_input)
-        search_layout.addSpacing(183)
+        search_layout.addStretch()
         search_layout.addWidget(self.btn_reverse_sorted)
         search_layout.addWidget(self.sorting_type)
         search_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -518,11 +585,11 @@ class WallpaperApp(QMainWindow):
         self.list_wallpapers.setItemDelegate(WallpaperDelegate(self.list_wallpapers))
         self.list_wallpapers.setMouseTracking(True)
         self.list_wallpapers.itemClicked.connect(self.on_wallpaper_selected)
-        self.list_wallpapers.itemDoubleClicked.connect(self.run_wallpaper)
+        self.list_wallpapers.itemDoubleClicked.connect(self.assign_selected_to_primary_and_apply)
         self.list_wallpapers.setItemAlignment(Qt.AlignmentFlag.AlignCenter)
         wallpapers_layout = QVBoxLayout()
         wallpapers_layout.addWidget(self.list_wallpapers)
-        wallpapers_layout.setContentsMargins(50,0,0,0)
+        wallpapers_layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(wallpapers_layout)
 
     def create_label(self, text_key):
@@ -566,8 +633,10 @@ class WallpaperApp(QMainWindow):
             self.combo_lang.addItem(name, code)
         self.combo_lang.setCurrentText(self.i18n.available_languages.get(self.i18n.current_code, "English"))
         self.combo_lang.blockSignals(False)
-        self.btn_set.setText(self._("set_wallpaper_button"))
-        self.btn_set_library.setText(self._("set_wallpaper_button"))
+        self.btn_set.setText(self._("apply_all_monitors_button"))
+        self.btn_set_library.setText(self._("set_on_target_button"))
+        if hasattr(self, "lbl_library_target"):
+            self.lbl_library_target.setText(self._("primary_target_label"))
         self.btn_stop.setText(self._("stop_button"))
         self.btn_show_log.setText(self._("show_log_button"))
         self.btn_scan.setText(self._("scan_local_wallpapers_button"))
@@ -585,6 +654,12 @@ class WallpaperApp(QMainWindow):
         self.properties_combo.setItemText(0, self._("properties_select_placeholder"))
         self.properties_value.setPlaceholderText(self._("property_value_placeholder"))
         self.search_input.setPlaceholderText(self._("search_placeholder"))
+        if hasattr(self, "btn_refresh_screens"):
+            self.btn_refresh_screens.setText(self._("refresh_screens_button"))
+            self.btn_assign_all.setText(self._("assign_all_monitors_button"))
+            self.btn_clear_all.setText(self._("clear_all_monitors_button"))
+            self.monitor_hint.setText(self._("monitors_hint"))
+        self.refresh_monitor_row_labels()
 
     def switch_page(self, row):
         self.stack.setCurrentIndex(row)
@@ -784,8 +859,253 @@ class WallpaperApp(QMainWindow):
             self.status_bar.showMessage(self._("status_local_wallpapers_found").format(count=self.list_wallpapers.count()))
 
     def on_wallpaper_selected(self, item):
-        data = item.data(Qt.ItemDataRole.UserRole)
-        self.wp_id_input.setText(data["id"])
+        data = item.data(Qt.ItemDataRole.UserRole) or {}
+        self.selected_wallpaper_meta = data
+        self.wp_id_input.blockSignals(True)
+        self.wp_id_input.setText(str(data.get("id", "")))
+        self.wp_id_input.blockSignals(False)
+        title = data.get("title") or data.get("id") or ""
+        self.lbl_selected_title.setText(self._("selected_wallpaper_label").format(title=title, id=data.get("id", "")))
+        self.on_wallpaper_id_changed()
+        self.status_bar.showMessage(self._("status_selected_wallpaper_id").format(id=data.get("id", "")))
+
+    def get_current_wallpaper_selection(self):
+        """Return {id, title} from the ID field / library selection."""
+        wp_id = self.wp_id_input.text().strip()
+        if not wp_id:
+            return None
+        title = wp_id
+        if self.selected_wallpaper_meta and str(self.selected_wallpaper_meta.get("id")) == wp_id:
+            title = self.selected_wallpaper_meta.get("title") or wp_id
+        else:
+            # Try to resolve title from library list
+            for i in range(self.list_wallpapers.count()):
+                item = self.list_wallpapers.item(i)
+                data = item.data(Qt.ItemDataRole.UserRole) or {}
+                if str(data.get("id")) == wp_id:
+                    title = data.get("title") or wp_id
+                    break
+        return {"id": wp_id, "title": title}
+
+    def _primary_target_combos(self):
+        """Control + Library target combos that must stay in sync."""
+        combos = []
+        if hasattr(self, "screen_combo"):
+            combos.append(self.screen_combo)
+        if hasattr(self, "library_screen_combo"):
+            combos.append(self.library_screen_combo)
+        return combos
+
+    def get_primary_target_screen(self):
+        if hasattr(self, "screen_combo") and self.screen_combo.count():
+            return self.screen_combo.currentText().strip()
+        if hasattr(self, "library_screen_combo") and self.library_screen_combo.count():
+            return self.library_screen_combo.currentText().strip()
+        return ""
+
+    def set_primary_target_screen(self, screen_name):
+        """Set the primary target on every synced combo."""
+        if not screen_name:
+            return
+        for combo in self._primary_target_combos():
+            idx = combo.findText(screen_name)
+            if idx < 0:
+                continue
+            combo.blockSignals(True)
+            combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+    def _on_primary_target_changed(self, *_args):
+        if not hasattr(self, "screen_combo"):
+            return
+        self.set_primary_target_screen(self.screen_combo.currentText().strip())
+
+    def _on_library_target_changed(self, *_args):
+        if not hasattr(self, "library_screen_combo"):
+            return
+        self.set_primary_target_screen(self.library_screen_combo.currentText().strip())
+
+    def _populate_primary_target_combos(self, prev_primary=""):
+        """Refill Control/Library target combos from self.screens."""
+        if not prev_primary:
+            prev_primary = self.get_primary_target_screen()
+        for combo in self._primary_target_combos():
+            combo.blockSignals(True)
+            combo.clear()
+            for s in self.screens:
+                combo.addItem(s["name"], s)
+            if prev_primary:
+                idx = combo.findText(prev_primary)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            combo.blockSignals(False)
+
+    def rebuild_monitor_panel(self):
+        """Detect screens and rebuild per-monitor assignment rows."""
+        # Preserve existing assignments across rebuild
+        previous = dict(self.monitor_assignments)
+
+        # Clear rows
+        while self.monitor_rows_layout.count():
+            item = self.monitor_rows_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self.monitor_row_widgets.clear()
+
+        self.screens = self.detect_screens()
+        self._populate_primary_target_combos()
+
+        # Drop assignments for disconnected screens; keep the rest
+        valid_names = {s["name"] for s in self.screens}
+        self.monitor_assignments = {
+            name: info for name, info in previous.items() if name in valid_names
+        }
+
+        for s in self.screens:
+            self._add_monitor_row(s)
+
+        self.refresh_monitor_row_labels()
+        self.status_bar.showMessage(
+            self._("status_screens_detected").format(count=len(self.screens))
+        )
+
+    def _add_monitor_row(self, screen):
+        name = screen["name"]
+        row = QFrame()
+        row.setProperty("class", "Card")
+        row.setStyleSheet(
+            "QFrame { background-color: #222222; border: 1px solid #3A3A3A; border-radius: 8px; }"
+        )
+        h = QHBoxLayout(row)
+        h.setContentsMargins(12, 10, 12, 10)
+        h.setSpacing(10)
+
+        info = QVBoxLayout()
+        lbl_name = QLabel(name)
+        lbl_name.setStyleSheet("font-weight: 600; font-size: 14px;")
+        res = f"{screen.get('w', '?')}×{screen.get('h', '?')}  @ {screen.get('x', '0')},{screen.get('y', '0')}"
+        lbl_res = QLabel(res)
+        lbl_res.setStyleSheet("color: #888888; font-size: 11px;")
+        info.addWidget(lbl_name)
+        info.addWidget(lbl_res)
+        h.addLayout(info, 1)
+
+        lbl_wp = QLabel(self._("monitor_unassigned"))
+        lbl_wp.setWordWrap(True)
+        lbl_wp.setMinimumWidth(220)
+        lbl_wp.setStyleSheet("color: #CCCCCC;")
+        h.addWidget(lbl_wp, 2)
+
+        btn_assign = QPushButton(self._("assign_monitor_button"))
+        btn_assign.setMinimumHeight(30)
+        btn_assign.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_assign.clicked.connect(lambda _=False, n=name: self.assign_selected_to_monitor(n, apply=False))
+
+        btn_apply_one = QPushButton(self._("assign_and_apply_button"))
+        btn_apply_one.setMinimumHeight(30)
+        btn_apply_one.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_apply_one.clicked.connect(lambda _=False, n=name: self.assign_selected_to_monitor(n, apply=True))
+
+        btn_clear = QPushButton(self._("clear_monitor_button"))
+        btn_clear.setObjectName("SecondaryButton")
+        btn_clear.setMinimumHeight(30)
+        btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_clear.clicked.connect(lambda _=False, n=name: self.clear_monitor_assignment(n))
+
+        h.addWidget(btn_assign)
+        h.addWidget(btn_apply_one)
+        h.addWidget(btn_clear)
+
+        self.monitor_rows_layout.addWidget(row)
+        self.monitor_row_widgets[name] = {
+            "row": row,
+            "label": lbl_wp,
+            "btn_assign": btn_assign,
+            "btn_apply": btn_apply_one,
+            "btn_clear": btn_clear,
+            "screen": screen,
+        }
+
+    def refresh_monitor_row_labels(self):
+        if not hasattr(self, "monitor_row_widgets"):
+            return
+        for name, widgets in self.monitor_row_widgets.items():
+            info = self.monitor_assignments.get(name)
+            if info and info.get("id"):
+                title = info.get("title") or info["id"]
+                widgets["label"].setText(
+                    self._("monitor_assigned").format(title=title, id=info["id"])
+                )
+                widgets["label"].setStyleSheet("color: #FFFFFF;")
+            else:
+                widgets["label"].setText(self._("monitor_unassigned"))
+                widgets["label"].setStyleSheet("color: #888888;")
+            # refresh button captions on language change
+            widgets["btn_assign"].setText(self._("assign_monitor_button"))
+            widgets["btn_apply"].setText(self._("assign_and_apply_button"))
+            widgets["btn_clear"].setText(self._("clear_monitor_button"))
+
+    def assign_selected_to_monitor(self, screen_name, apply=False):
+        selection = self.get_current_wallpaper_selection()
+        if not selection:
+            self.status_bar.showMessage(self._("status_error_empty_id"))
+            return
+        self.monitor_assignments[screen_name] = selection
+        # Keep primary target combos in sync with last assign target
+        self.set_primary_target_screen(screen_name)
+        self.refresh_monitor_row_labels()
+        self.save_config()
+        self.status_bar.showMessage(
+            self._("status_assigned_to_monitor").format(
+                title=selection["title"], screen=screen_name
+            )
+        )
+        if apply:
+            self.run_wallpaper()
+
+    def assign_selected_to_all_monitors(self):
+        selection = self.get_current_wallpaper_selection()
+        if not selection:
+            self.status_bar.showMessage(self._("status_error_empty_id"))
+            return
+        if not self.screens:
+            self.rebuild_monitor_panel()
+        if not self.screens:
+            self.status_bar.showMessage(self._("status_error_screen_not_selected"))
+            return
+        for s in self.screens:
+            self.monitor_assignments[s["name"]] = selection
+        self.refresh_monitor_row_labels()
+        self.save_config()
+        self.status_bar.showMessage(
+            self._("status_assigned_to_all").format(title=selection["title"])
+        )
+
+    def clear_monitor_assignment(self, screen_name):
+        self.monitor_assignments.pop(screen_name, None)
+        self.refresh_monitor_row_labels()
+        self.save_config()
+
+    def clear_all_monitor_assignments(self):
+        self.monitor_assignments.clear()
+        self.refresh_monitor_row_labels()
+        self.save_config()
+
+    def _sync_library_selection_to_id(self):
+        """Ensure library list selection is reflected in the wallpaper ID field."""
+        item = self.list_wallpapers.currentItem()
+        if item is not None:
+            self.on_wallpaper_selected(item)
+
+    def assign_selected_to_primary_and_apply(self, *_args):
+        """Library 'Set on target' / double-click: assign to primary monitor, keep others, apply all."""
+        self._sync_library_selection_to_id()
+        screen = self.get_primary_target_screen()
+        if not screen:
+            self.status_bar.showMessage(self._("status_error_screen_not_selected"))
+            return
+        self.assign_selected_to_monitor(screen, apply=True)
 
     def filter_wallpapers(self, text):
         query = text.lower()
@@ -1069,7 +1389,35 @@ class WallpaperApp(QMainWindow):
     def kill_external_wallpapers(self):
         self.wallpaper_proc_manager.kill_external("linux-wallpaperengine")
 
-    def run_wallpaper(self):
+    def _append_global_wallpaper_flags(self, cmd):
+        """Shared audio/perf/property flags for the backend process."""
+        if self.chk_silent.isChecked():
+            cmd.append('--silent')
+        elif self.slider_volume.value() != 15:
+            cmd.extend(['--volume', str(self.slider_volume.value())])
+        if self.chk_no_automute.isChecked():
+            cmd.append('--noautomute')
+        if self.chk_no_proc.isChecked():
+            cmd.append('--no-audio-processing')
+        if self.slider_fps.value() != 30:
+            cmd.extend(['--fps', str(self.slider_fps.value())])
+        if self.chk_mouse.isChecked():
+            cmd.append('--disable-mouse')
+        if self.chk_parallax.isChecked():
+            cmd.append('--disable-parallax')
+        if self.chk_fs_pause.isChecked():
+            cmd.append('--no-fullscreen-pause')
+        if hasattr(self, "properties_data"):
+            for name, data in self.properties_data.items():
+                value = self.normalize_property_value(str(data.get("value", "")))
+                sep = data.get("sep", "=")
+                cmd.extend(['--set-property', f"{name}{sep}{value}"])
+        custom_args = self.input_custom_args.text()
+        if custom_args:
+            for arg in custom_args.split():
+                cmd.append(arg)
+
+    def run_wallpaper(self, *_args):
         if not shutil.which("linux-wallpaperengine"):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error",
@@ -1078,45 +1426,69 @@ class WallpaperApp(QMainWindow):
             self.status_bar.showMessage("Error: linux-wallpaperengine not found")
             return
 
+        scale = self.combo_scaling.currentText()
+        clamp = self.combo_clamp.currentText()
+        self.config["scale"] = scale
+        self.config["clamp"] = clamp
+
         cmd = ['linux-wallpaperengine']
-        screen_name = self.screen_combo.currentText()
+        self._append_global_wallpaper_flags(cmd)
 
         if self.chk_windowed_mode.isChecked():
+            # Windowed preview uses the currently selected wallpaper only
+            selection = self.get_current_wallpaper_selection()
+            if not selection:
+                self.status_bar.showMessage(self._("status_error_empty_id"))
+                return
+            screen_name = self.get_primary_target_screen()
             geom = "0x0x1920x1080"
             found = next((s for s in self.screens if s["name"] == screen_name), None)
             if found:
                 geom = f"{found['x']}x{found['y']}x{found['w']}x{found['h']}"
-            cmd.extend(['--window', geom])
+            if scale != 'default':
+                cmd.extend(['--scaling', scale])
+            if clamp != 'clamp':
+                cmd.extend(['--clamp', clamp])
+            cmd.extend(['--window', geom, '--bg', selection["id"]])
         else:
-            cmd.extend(['--screen-root', screen_name])
+            # Build one process with per-monitor --screen-root / --bg pairs
+            active = [
+                (name, info) for name, info in self.monitor_assignments.items()
+                if info and info.get("id")
+            ]
+            # Fallback: if nothing assigned yet, put selected wallpaper on every screen
+            if not active:
+                selection = self.get_current_wallpaper_selection()
+                if not self.screens:
+                    self.rebuild_monitor_panel()
+                if selection and self.screens:
+                    for s in self.screens:
+                        self.monitor_assignments[s["name"]] = selection
+                    self.refresh_monitor_row_labels()
+                    active = [(s["name"], selection) for s in self.screens]
+                else:
+                    self.status_bar.showMessage(self._("status_error_no_assignments"))
+                    return
 
-        cmd.extend(['--bg', self.wp_id_input.text()])
-        if self.chk_silent.isChecked(): cmd.append('--silent')
-        elif self.slider_volume.value() != 15: cmd.extend(['--volume', str(self.slider_volume.value())])
-        if self.chk_no_automute.isChecked(): cmd.append('--noautomute')
-        if self.chk_no_proc.isChecked(): cmd.append('--no-audio-processing')
-        if self.slider_fps.value() != 30: cmd.extend(['--fps', str(self.slider_fps.value())])
-        if self.chk_mouse.isChecked(): cmd.append('--disable-mouse')
-        if self.chk_parallax.isChecked(): cmd.append('--disable-parallax')
-        if self.chk_fs_pause.isChecked(): cmd.append('--no-fullscreen-pause')
-        scale = self.combo_scaling.currentText()
-        self.config["scale"] = scale
-        if scale != 'default': cmd.extend(['--scaling', scale])
-        clamp = self.combo_clamp.currentText()
-        self.config["clamp"] = clamp
-        if clamp != 'clamp': cmd.extend(['--clamp', clamp])
-        if hasattr(self, "properties_data"):
-            for name, data in self.properties_data.items():
-                value = self.normalize_property_value(str(data.get("value", "")))
-                sep = data.get("sep", "=")
-                cmd.extend(['--set-property', f"{name}{sep}{value}"])
-        custom_args = self.input_custom_args.text()
-        if custom_args:
-             for arg in custom_args.split(): cmd.append(arg)
+            # Stable order: match detect_screens left-to-right
+            order = {s["name"]: i for i, s in enumerate(self.screens)}
+            active.sort(key=lambda pair: order.get(pair[0], 999))
+
+            for screen_name, info in active:
+                # Per-output scaling/clamp (backend applies to previous screen-root)
+                if scale != 'default':
+                    cmd.extend(['--scaling', scale])
+                if clamp != 'clamp':
+                    cmd.extend(['--clamp', clamp])
+                cmd.extend(['--screen-root', screen_name, '--bg', str(info["id"])])
+
         self.stop_wallpapers()
         try:
             self.wallpaper_proc_manager.start(cmd)
-            self.status_bar.showMessage(self._("status_command_launched"))
+            assigned = len([1 for v in self.monitor_assignments.values() if v and v.get("id")])
+            self.status_bar.showMessage(
+                self._("status_multi_launched").format(count=assigned)
+            )
             self.save_config()
         except Exception as e:
             logging.error("Couldn't run with error %s", e)
@@ -1165,48 +1537,117 @@ class WallpaperApp(QMainWindow):
 
     def restore_last_wallpaper(self):
         c = self.config.get("last_wallpaper", {})
-        if not c: return
-        self.wp_id_input.setText(c.get("background_id", ""))
-        self.screen_combo.setCurrentText(c.get("screen", ""))
-        self.chk_silent.setChecked(c.get("silent", False))
-        self.slider_volume.setValue(c.get("volume", 15))
-        self.chk_no_automute.setChecked(c.get("noautomute", False))
-        self.chk_no_proc.setChecked(c.get("no-audio-processing", False))
-        self.slider_fps.setValue(c.get("fps", 30))
-        self.chk_mouse.setChecked(c.get("disable-mouse", False))
-        self.chk_parallax.setChecked(c.get("disable-parallax", False))
-        self.chk_fs_pause.setChecked(c.get("no-fullscreen-pause", False))
-        self.input_custom_args.setText(c.get("custom_args", ""))
-        self.chk_windowed_mode.setChecked(c.get("windowed_mode", False))
-        self.run_wallpaper()
-        # Library Settings
-        self.sorting_type.setCurrentText(self.config.get("sorting_type", "name"))
+        # Library Settings first so list is sorted consistently
+        self.sorting_type.setCurrentText(self.config.get("sorting_type", "Name"))
         self.sort_reversed_state = self.config.get("reversed", False)
-        self.btn_reverse_sorted.setText("↑") if self.sort_reversed_state == False else self.btn_reverse_sorted.setText("↓")
-        self.watcher.library_changed.emit()
+        self.btn_reverse_sorted.setText("↓" if self.sort_reversed_state else "↑")
+
+        # Multi-monitor assignments (new format)
+        stored = self.config.get("monitor_assignments") or {}
+        if stored:
+            self.monitor_assignments = {}
+            for name, info in stored.items():
+                if isinstance(info, dict) and info.get("id"):
+                    self.monitor_assignments[name] = {
+                        "id": str(info["id"]),
+                        "title": info.get("title") or str(info["id"]),
+                    }
+                elif isinstance(info, str) and info:
+                    self.monitor_assignments[name] = {"id": info, "title": info}
+            self.refresh_monitor_row_labels()
+
+        if not c and not stored:
+            return
+
+        if c:
+            self.wp_id_input.setText(c.get("background_id", ""))
+            screen = c.get("screen", "")
+            if screen:
+                self.set_primary_target_screen(screen)
+            self.chk_silent.setChecked(c.get("silent", False))
+            self.slider_volume.setValue(c.get("volume", 15))
+            self.chk_no_automute.setChecked(c.get("noautomute", False))
+            self.chk_no_proc.setChecked(c.get("no-audio-processing", False))
+            self.slider_fps.setValue(c.get("fps", 30))
+            self.chk_mouse.setChecked(c.get("disable-mouse", False))
+            self.chk_parallax.setChecked(c.get("disable-parallax", False))
+            self.chk_fs_pause.setChecked(c.get("no-fullscreen-pause", False))
+            self.input_custom_args.setText(c.get("custom_args", ""))
+            self.chk_windowed_mode.setChecked(c.get("windowed_mode", False))
+
+            # Migrate legacy single-screen config into assignments if needed
+            if not stored and c.get("background_id") and c.get("screen"):
+                self.monitor_assignments[c["screen"]] = {
+                    "id": c["background_id"],
+                    "title": c.get("background_title") or c["background_id"],
+                }
+                self.refresh_monitor_row_labels()
+
+        # Auto-apply restored multi-monitor layout
+        if any(v.get("id") for v in self.monitor_assignments.values()):
+            self.run_wallpaper()
 
     def detect_screens(self):
         screens = []
+        # Prefer hyprctl on Hyprland (accurate connector names under Wayland)
         try:
-            res = subprocess.run(['xrandr', '--query'], capture_output=True, text=True)
+            res = subprocess.run(
+                ['hyprctl', 'monitors', '-j'],
+                capture_output=True, text=True, timeout=3
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                for m in data:
+                    screens.append({
+                        "name": m.get("name"),
+                        "w": str(m.get("width", "?")),
+                        "h": str(m.get("height", "?")),
+                        "x": str(m.get("x", 0)),
+                        "y": str(m.get("y", 0)),
+                    })
+                screens = [s for s in screens if s.get("name")]
+                if screens:
+                    screens.sort(key=lambda s: (int(s.get("x") or 0), int(s.get("y") or 0)))
+                    return screens
+        except Exception as e:
+            logging.debug("hyprctl screen detection failed: %s", e)
 
-
-            pattern = re.compile(r'^(\S+)\s+connected\s+(?:primary\s+)?(\d+)x(\d+)\+(\d+)\+(\d+)')
-
+        # xrandr (X11 / XWayland)
+        try:
+            res = subprocess.run(['xrandr', '--query'], capture_output=True, text=True, timeout=3)
+            pattern = re.compile(
+                r'^(\S+)\s+connected(?:\s+primary)?\s+(\d+)x(\d+)\+(\d+)\+(\d+)'
+            )
             for line in res.stdout.splitlines():
                 match = pattern.match(line)
                 if match:
                     name, w, h, x, y = match.groups()
-                    screens.append({
-                        "name": name,
-                        "w": w, "h": h, "x": x, "y": y
-                    })
+                    screens.append({"name": name, "w": w, "h": h, "x": x, "y": y})
         except Exception as e:
-            logging.error(f"Screen detection error: {e}")
+            logging.error("Screen detection error: %s", e)
+
+        # Qt screens as last resort (names may be generic)
+        if not screens:
+            try:
+                app = QApplication.instance()
+                if app:
+                    for i, qs in enumerate(app.screens()):
+                        g = qs.geometry()
+                        name = qs.name() or f"Screen-{i}"
+                        screens.append({
+                            "name": name,
+                            "w": str(g.width()),
+                            "h": str(g.height()),
+                            "x": str(g.x()),
+                            "y": str(g.y()),
+                        })
+            except Exception as e:
+                logging.error("Qt screen detection error: %s", e)
 
         if not screens:
             screens = [{"name": "eDP-1", "w": "1920", "h": "1080", "x": "0", "y": "0"}]
 
+        screens.sort(key=lambda s: (int(s.get("x") or 0), int(s.get("y") or 0)))
         return screens
 
     def load_config_data(self):
@@ -1245,9 +1686,11 @@ class WallpaperApp(QMainWindow):
         self.populate_properties_combo(stored)
 
     def save_config(self):
+        selection = self.get_current_wallpaper_selection()
         self.config["last_wallpaper"] = {
             "background_id": self.wp_id_input.text(),
-            "screen": self.screen_combo.currentText(),
+            "background_title": (selection or {}).get("title", ""),
+            "screen": self.get_primary_target_screen(),
             "silent": self.chk_silent.isChecked(),
             "volume": self.slider_volume.value(),
             "noautomute": self.chk_no_automute.isChecked(),
@@ -1258,6 +1701,12 @@ class WallpaperApp(QMainWindow):
             "no-fullscreen-pause": self.chk_fs_pause.isChecked(),
             "custom_args": self.input_custom_args.text(),
             "windowed_mode": self.chk_windowed_mode.isChecked(),
+        }
+        # Persist per-monitor assignments for dual/multi-monitor restore
+        self.config["monitor_assignments"] = {
+            name: {"id": info.get("id", ""), "title": info.get("title", "")}
+            for name, info in self.monitor_assignments.items()
+            if info and info.get("id")
         }
         wallpaper_id = self.wp_id_input.text().strip()
         if wallpaper_id:
