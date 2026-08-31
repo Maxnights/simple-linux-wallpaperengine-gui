@@ -150,13 +150,21 @@ class WallpaperDelegate(QStyledItemDelegate):
         painter.restore()
 
 class WallpaperChangeHandler(FileSystemEventHandler):
+    # watchdog's inotify mask includes IN_OPEN and IN_CLOSE_NOWRITE, so merely
+    # reading a file under a watched directory raises an event. A running
+    # wallpaper reads its own assets continuously, which would retrigger a full
+    # library rescan for as long as it runs. Only treat add/remove/rename/write
+    # as a library change.
+    RELEVANT_EVENTS = ("created", "deleted", "moved", "modified")
+
     def __init__(self, signal):
         self.signal = signal
 
     def on_any_event(self, event):
         if event.is_directory:
             return
-        # Trigger update on file changes (creation, deletion, modification)
+        if event.event_type not in self.RELEVANT_EVENTS:
+            return
         self.signal.emit()
 
 class LibraryWatcher(QObject):
